@@ -1,4 +1,4 @@
-.env
+/backend/.env
 *.log
 temp/
-node_modules/
+/backend/node_modules/
