@@ -1,0 +1,4 @@
+/backend/.env
+*.log
+temp/
+/backend/node_modules/
