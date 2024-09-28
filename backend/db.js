@@ -68,16 +68,52 @@ async function listFiles() {
         const mostRecentFile = files[0];
         console.log(`Most recent .xlsx file: ${mostRecentFile.name}`);
         // Download parameter: file path and date updated 
-        await downloadFile(mostRecentFile.path_lower, mostRecentFile.server_modified);
+        // generate timestamp based on modifiedDate->generate local file name
+        const timestamp = new Date(mostRecentFile.server_modified).toISOString().replace(/[:.]/g, '-');
+        const localFileName = `downloaded-file-${timestamp}.xlsx`;
+
+        (async () => {
+            await downloadFile(mostRecentFile.path_lower, localFileName);
+            // parse and save file
+            await parseExcelAndCreateTable(localFileName);
+        })();
     } catch (error) {
         console.error('Error listing files:', error.response ? error.response.data : error.message);
     }
 }
 
 // download a file from Dropbox with dropboxFilePath and save file with given modifiedDate 
-async function downloadFile(dropboxFilePath, modifiedDate) {
-    try {
-        const response = await axios.post(
+// async function downloadFile(dropboxFilePath, localFileName) {
+//     try {
+//         const response = await axios.post(
+//             'https://content.dropboxapi.com/2/files/download',
+//             null,
+//             {
+//                 headers: {
+//                     'Authorization': `Bearer ${accessToken}`,
+//                     'Dropbox-API-Arg': JSON.stringify({ path: dropboxFilePath }),
+//                     'Content-Type': 'application/octet-stream'
+//                 },
+//                 responseType: 'stream',
+//             }
+//         );
+//         // save the file to the local system
+//         const writer = fs.createWriteStream(localFileName);
+//         response.data.pipe(writer);
+//         writer.on('finish', () => {
+//             console.log(`File downloaded successfully as ${localFileName}`);
+//         });
+//         writer.on('error', (error) => {
+//             console.error('Error writing file:', error);
+//         });
+
+//     } catch (error) {
+//         console.error('Error downloading file:', error);
+//     }
+// }
+async function downloadFile(dropboxFilePath, localFilePath) {
+    return new Promise((resolve, reject) => {
+        axios.post(
             'https://content.dropboxapi.com/2/files/download',
             null,
             {
@@ -86,26 +122,27 @@ async function downloadFile(dropboxFilePath, modifiedDate) {
                     'Dropbox-API-Arg': JSON.stringify({ path: dropboxFilePath }),
                     'Content-Type': 'application/octet-stream'
                 },
-                responseType: 'stream',
+                responseType: 'stream'
             }
-        );
-        // generate timestamp based on modifiedDate->generate local file name
-        const timestamp = new Date(modifiedDate).toISOString().replace(/[:.]/g, '-');
-        const localFileName = `downloaded-file-${timestamp}.xlsx`;
-        // save the file to the local system
-        const writer = fs.createWriteStream(localFileName);
-        response.data.pipe(writer);
-        writer.on('finish', () => {
-            console.log(`File downloaded successfully as ${localFileName}`);
+        ).then(response => {
+            const writer = fs.createWriteStream(localFilePath);
+
+            response.data.pipe(writer);
+
+            writer.on('finish', () => {
+                console.log(`File downloaded successfully as ${localFilePath}`);
+                resolve();
+            });
+
+            writer.on('error', (err) => {
+                console.error('Error writing file:', err);
+                reject(err);
+            });
+        }).catch(error => {
+            console.error('Error downloading file:', error);
+            reject(error);
         });
-        writer.on('error', (error) => {
-            console.error('Error writing file:', error);
-        });
-        // parse and save file
-        await parseExcelAndCreateTable(localFileName);
-    } catch (error) {
-        console.error('Error downloading file:', error);
-    }
+    });
 }
 
 
@@ -132,37 +169,53 @@ async function parseExcelAndCreateTable(fileName) {
         const worksheet = workbook.Sheets[sheetName];
         const data = xlsx.utils.sheet_to_json(worksheet);
         // get col names
-        const columnNames = Object.values(data[0]);
+        const columnNames = Object.keys(data[0]);
+        console.log(columnNames);
+        console.log(filePath);
+        console.log(data);
         // create table
-        const createTableColumns = columnNames.map(column => `\`${column}\` VARCHAR(255)`).join(', ');
+        // const createTableColumns = columnNames.map(column => `\`${column.replace(/[^a-zA-Z0-9_]/g, '_')}\` VARCHAR(255)`).join(', ');
+        const sanitizedColumns = columnNames.map(col => `\`${sanitizeName(col)}\` VARCHAR(255)`).join(', ');
+        const tableName = sanitizeName(filePath.replace('.xlsx', ''));
         const createTableQuery = `
-            CREATE TABLE IF NOT EXISTS excel_data (
+            CREATE TABLE IF NOT EXISTS \`${tableName}\` (
                 id INT AUTO_INCREMENT PRIMARY KEY,
-                ${createTableColumns}
+                ${sanitizedColumns}
             );
-            `;
-        con.query(createTableQuery, (err) => {
-            if (err) throw err;
-            console.log('Table created or already exists');
-        });
-        // insert data
-        data.slice(1).forEach((row) => {
-            const values = Object.values(row);
-            const insertQuery = `
-                INSERT INTO excel_data (${columnNames.map(col => `\`${col}\``).join(', ')})
-                VALUES (${columnNames.map(() => '?').join(', ')});
-                `;
+        `;
 
-            con.query(insertQuery, values, (err, results) => {
-                if (err) throw err;
-                console.log('Row inserted:', results.insertId);
+        con.query(createTableQuery, (err) => {
+            if (err) {
+                console.error('Error creating table:', err);
+                con.end();
+                return;
+            }
+            console.log(`Table \`${tableName}\` created or already exists.`);
+
+            // Insert data into the table
+            data.forEach((row) => {
+                const sanitizedValues = Object.keys(row).map(col => row[col]);
+                const insertQuery = `
+                    INSERT INTO \`${tableName}\` (${columnNames.map(col => `\`${sanitizeName(col)}\``).join(', ')})
+                    VALUES (${columnNames.map(() => '?').join(', ')});
+                `;
+                con.query(insertQuery, sanitizedValues, (err) => {
+                    if (err) console.error('Error inserting data:', err);
+                });
             });
+
+            con.end();
         });
-        // stop connection
-        con.end();
     } catch (error) {
         console.error('Error parsing Excel file or creating table:', error.message);
     }
+}
+
+function sanitizeTableName(fileName) {
+    return fileName.replace(/[^a-zA-Z0-9_]/g, '_');
+}
+function sanitizeName(name) {
+    return String(name).replace(/[^a-zA-Z0-9_]/g, '_');
 }
 
 // start app
