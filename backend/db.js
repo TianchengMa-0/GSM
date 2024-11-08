@@ -83,34 +83,6 @@ async function listFiles() {
 }
 
 // download a file from Dropbox with dropboxFilePath and save file with given modifiedDate 
-// async function downloadFile(dropboxFilePath, localFileName) {
-//     try {
-//         const response = await axios.post(
-//             'https://content.dropboxapi.com/2/files/download',
-//             null,
-//             {
-//                 headers: {
-//                     'Authorization': `Bearer ${accessToken}`,
-//                     'Dropbox-API-Arg': JSON.stringify({ path: dropboxFilePath }),
-//                     'Content-Type': 'application/octet-stream'
-//                 },
-//                 responseType: 'stream',
-//             }
-//         );
-//         // save the file to the local system
-//         const writer = fs.createWriteStream(localFileName);
-//         response.data.pipe(writer);
-//         writer.on('finish', () => {
-//             console.log(`File downloaded successfully as ${localFileName}`);
-//         });
-//         writer.on('error', (error) => {
-//             console.error('Error writing file:', error);
-//         });
-
-//     } catch (error) {
-//         console.error('Error downloading file:', error);
-//     }
-// }
 async function downloadFile(dropboxFilePath, localFilePath) {
     return new Promise((resolve, reject) => {
         axios.post(
